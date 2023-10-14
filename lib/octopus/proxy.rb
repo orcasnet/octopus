@@ -90,6 +90,10 @@ module Octopus
     alias_method :safe_connection, :safe_connection_with_fork_check
 
     def select_connection
+      new_safe_connection = safe_connection(shards[shard_name])
+      return new_safe_connection if new_safe_connection.present?
+
+      proxy_config.reinitialize_shards
       safe_connection(shards[shard_name])
     end
 
