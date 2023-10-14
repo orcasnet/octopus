@@ -74,14 +74,20 @@ module Octopus
         connection_pool.connection.enable_query_cache!
       end
       connection_pool.connection
-    rescue NoMethodError
-      proxy_config.reinitialize_shards
-      connection_pool.automatic_reconnect ||= true
-      if !connection_pool.connected? && shards[Octopus.master_shard].connection.query_cache_enabled
-        connection_pool.connection.enable_query_cache!
-      end
-      connection_pool.connection
     end
+
+    alias_method :safe_connection_without_fork_check, :safe_connection
+
+    def safe_connection_with_fork_check(connection_pool)
+      retries ||= 0
+      safe_connection_without_fork_check(connection_pool)
+    rescue NoMethodError
+      ActiveRecord::Base.establish_connection
+      ActiveRecord::Base.connection.initialize_shards(Octopus.config)
+      retry if (retries += 1) < 2
+    end
+
+    alias_method :safe_connection, :safe_connection_with_fork_check
 
     def select_connection
       safe_connection(shards[shard_name])
@@ -177,10 +183,11 @@ module Octopus
     end
 
     def connected?
+      retries ||= 0
       shards.any? { |_k, v| v.connected? }
     rescue NoMethodError
       proxy_config.reinitialize_shards
-      retry
+      retry if (retries += 1) < 2
     end
 
     def should_send_queries_to_shard_slave_group?(method)
